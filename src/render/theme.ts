@@ -25,6 +25,10 @@ export interface ThemeTokens {
   pk: string;
   fk: string;
   uq: string;
+  /** Views: border, badge and title ink. */
+  view: string;
+  /** Views: header tint. */
+  viewHeader: string;
   danger: string;
   warn: string;
   schemaFillAlpha: number;
@@ -53,6 +57,8 @@ export const THEMES: Record<'light' | 'dark', ThemeTokens> = {
     pk: '#b7791f',
     fk: '#3b6fb6',
     uq: '#2f855a',
+    view: '#0e7c86',
+    viewHeader: '#e3f2f2',
     danger: '#c53030',
     warn: '#b7791f',
     schemaFillAlpha: 0.07,
@@ -79,6 +85,8 @@ export const THEMES: Record<'light' | 'dark', ThemeTokens> = {
     pk: '#e0b050',
     fk: '#79a8ea',
     uq: '#68c08f',
+    view: '#4cc3cc',
+    viewHeader: '#1b2e31',
     danger: '#f07070',
     warn: '#e0b050',
     schemaFillAlpha: 0.09,

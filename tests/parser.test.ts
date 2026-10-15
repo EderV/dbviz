@@ -108,3 +108,82 @@ describe('parser → model', () => {
     }
   });
 });
+
+describe('views', () => {
+  const sql = `
+CREATE SCHEMA reporting;
+CREATE TABLE public.users (id bigint PRIMARY KEY, email text NOT NULL, created_at timestamptz);
+CREATE TABLE public.orders (id bigint PRIMARY KEY, user_id bigint REFERENCES users(id), total numeric(10,2));
+CREATE VIEW reporting.user_orders AS
+  SELECT u.id AS user_id, u.email, o.total, count(*) AS n, o.total::text AS total_label
+  FROM users u JOIN orders o ON o.user_id = u.id
+  GROUP BY 1, 2, 3
+  WITH LOCAL CHECK OPTION;
+CREATE OR REPLACE VIEW reporting.user_orders AS SELECT u.id AS user_id, u.email FROM users u;
+CREATE VIEW all_users (uid, mail) AS SELECT * FROM users;
+CREATE MATERIALIZED VIEW reporting.totals AS SELECT user_id, sum(total) AS total FROM orders GROUP BY user_id WITH NO DATA;
+CREATE UNIQUE INDEX totals_user ON reporting.totals (user_id);
+COMMENT ON VIEW all_users IS 'Everyone';
+`;
+
+  it('parses CREATE [MATERIALIZED] VIEW into view nodes with typed columns', async () => {
+    const { model, diagnostics } = await parse(sql);
+    expect(diagnostics).toEqual([]);
+
+    const uo = model.tables.find((t) => t.id === 'reporting.user_orders')!;
+    expect(uo.kind).toBe('view');
+    // CREATE OR REPLACE swaps the definition in place.
+    expect(uo.columns.map((c) => [c.name, c.type])).toEqual([
+      ['user_id', 'bigint'],
+      ['email', 'text'],
+    ]);
+    expect(uo.definition).toBe('SELECT u.id AS user_id, u.email FROM users u');
+    expect(uo.columns.map((c) => c.nullable)).toEqual([false, false]);
+    expect(uo.primaryKey).toEqual([]);
+
+    const all = model.tables.find((t) => t.id === 'public.all_users')!;
+    expect(all.kind).toBe('view');
+    expect(all.columns.map((c) => c.name)).toEqual(['uid', 'mail', 'created_at']);
+    expect(all.comment).toBe('Everyone');
+
+    const totals = model.tables.find((t) => t.id === 'reporting.totals')!;
+    expect(totals.kind).toBe('materialized-view');
+    expect(totals.columns.map((c) => c.name)).toEqual(['user_id', 'total']);
+    expect(totals.columns[0]).toMatchObject({ type: 'bigint', isUnique: true });
+    expect(totals.definition).toBe('SELECT user_id, sum(total) AS total FROM orders GROUP BY user_id');
+
+    expect(model.relationships).toHaveLength(1);
+    expect(model.schemas.find((s) => s.name === 'reporting')?.tableIds).toEqual(['reporting.user_orders', 'reporting.totals']);
+  });
+
+  it('derives column names from expressions and set operations', async () => {
+    const { model } = await parse(`
+CREATE TABLE t (a int, b text);
+CREATE VIEW v AS SELECT a, now(), b::varchar(5), 1 + 1 FROM t UNION ALL SELECT a, now(), b, 2 FROM t;
+CREATE VIEW vals AS VALUES (1, 'x');`);
+    const v = model.tables.find((t) => t.id === 'public.v')!;
+    expect(v.columns.map((c) => [c.name, c.type])).toEqual([
+      ['a', 'integer'],
+      ['now', ''],
+      ['b', 'varchar(5)'],
+      ['?column?', ''],
+    ]);
+    expect(model.tables.find((t) => t.id === 'public.vals')!.columns.map((c) => c.name)).toEqual(['column1', 'column2']);
+  });
+
+  it('counts views separately in model stats', async () => {
+    const { modelStats } = await import('../src/domain/model');
+    const { model } = await parse(sql);
+    expect(modelStats(model)).toMatchObject({ tables: 2, views: 3 });
+  });
+});
+
+describe('views in a pg_dump', () => {
+  it('reads views over parenthesized joins', async () => {
+    const { model } = await parse(fixture('05-pg-dump-realistic.sql'));
+    const v = model.tables.find((t) => t.id === 'billing.active_subscriptions')!;
+    expect(v.kind).toBe('view');
+    expect(v.columns.map((c) => c.name)).toEqual(['id', 'organization_id', 'tier']);
+    expect(v.columns.find((c) => c.name === 'tier')?.enumId).toBe('billing.plan_tier');
+  });
+});

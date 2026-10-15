@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { modelStats } from '../../domain/model';
+import { modelStats, type TableKind } from '../../domain/model';
 import { hubThreshold, isFiltering, schemaHue } from '../../view/graphQueries';
 import { useApp } from '../state/store';
 import { useVisibleSet } from './Diagram';
@@ -143,7 +143,7 @@ export function Inspector() {
           </button>
         )}
       </div>
-      {table.kind !== 'table' && <div className="insp-note">{table.kind === 'external' ? 'Referenced but not defined in this script.' : 'Partitioned table'}</div>}
+      {table.kind !== 'table' && <div className={`insp-note ${table.kind}`}>{KIND_NOTES[table.kind]}</div>}
       {table.comment && <p className="insp-comment">{table.comment}</p>}
       <div className="insp-section">
         Columns <span className="muted">{table.columns.length}</span>
@@ -225,6 +225,12 @@ export function Inspector() {
           </ul>
         </>
       )}
+      {table.definition && (
+        <>
+          <div className="insp-section">Definition</div>
+          <pre className="insp-def">{table.definition}</pre>
+        </>
+      )}
       {table.checks.length > 0 && (
         <>
           <div className="insp-section">Checks</div>
@@ -241,6 +247,13 @@ export function Inspector() {
     </section>
   );
 }
+
+const KIND_NOTES: Record<Exclude<TableKind, 'table'>, string> = {
+  external: 'Referenced but not defined in this script.',
+  partitioned: 'Partitioned table',
+  view: 'View — a stored query, not a table. Columns come from its SELECT.',
+  'materialized-view': 'Materialized view — a stored query whose result is kept on disk.',
+};
 
 export function DiagnosticsPanel() {
   const diagnostics = useApp((s) => s.parse?.diagnostics) ?? NO_DIAGNOSTICS;
@@ -289,6 +302,11 @@ export function StatusBar() {
           <span>
             <b>{m.tables}</b> tables
           </span>
+          {m.views > 0 && (
+            <span>
+              <b>{m.views}</b> {m.views === 1 ? 'view' : 'views'}
+            </span>
+          )}
           <span>
             <b>{m.relationships}</b> relations
           </span>

@@ -7,7 +7,7 @@
  * arithmetic instead of DOM measurement — which also means sizing runs in a
  * Web Worker.
  */
-import type { ColumnModel, TableModel } from '../domain/model';
+import type { ColumnModel, TableKind, TableModel } from '../domain/model';
 import type { CardColumns, ColumnMode } from './types';
 
 export const CARD = {
@@ -29,6 +29,17 @@ export const CARD = {
   maxDefaultChars: 14,
   maxTitleChars: 34,
 } as const;
+
+/** The pill in a view's header that tells it apart from a table. */
+export const VIEW_BADGE = { fontSize: 9.5, paddingX: 5, height: 16, gap: 6 } as const;
+
+export function viewBadgeLabel(kind: TableKind): string | undefined {
+  return kind === 'view' ? 'VIEW' : kind === 'materialized-view' ? 'MAT VIEW' : undefined;
+}
+
+export function viewBadgeWidth(label: string): number {
+  return Math.ceil(label.length * VIEW_BADGE.fontSize * CARD.advance + VIEW_BADGE.paddingX * 2);
+}
 
 export const COLLAPSED_SCHEMA = { width: 240, height: 96 } as const;
 
@@ -77,7 +88,9 @@ export function measureCard(table: TableModel, mode: ColumnMode, referenced: Set
   };
   const rowWidth =
     CARD.paddingX * 2 + CARD.iconWidth + cardColumns.name + CARD.gap + cardColumns.type + (cardColumns.default > 0 ? CARD.gap + cardColumns.default : 0) + CARD.flagWidth;
-  const titleWidth = CARD.paddingX * 2 + Math.min(table.name.length, CARD.maxTitleChars) * headerCharW + 28;
+  const badge = viewBadgeLabel(table.kind);
+  const titleWidth =
+    CARD.paddingX * 2 + Math.min(table.name.length, CARD.maxTitleChars) * headerCharW + 28 + (badge ? viewBadgeWidth(badge) + VIEW_BADGE.gap : 0);
   const width = Math.ceil(Math.max(CARD.minWidth, rowWidth, titleWidth));
 
   // Give any slack to the type column so rows stay left-aligned and tidy.

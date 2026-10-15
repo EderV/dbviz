@@ -2,7 +2,7 @@
  * Pure read-side queries over the model, used by the UI for selection,
  * filters and search. No React, no layout — unit-testable in isolation.
  */
-import type { DatabaseModel, TableId } from '../domain/model';
+import { isViewKind, type DatabaseModel, type TableId } from '../domain/model';
 
 export interface GraphIndex {
   neighbors: Map<TableId, Set<TableId>>;
@@ -88,7 +88,8 @@ export function visibleTables(model: DatabaseModel, index: GraphIndex, f: Filter
     if (f.focusSchema && t.schema !== f.focusSchema) continue;
     if (related && !related.has(t.id)) continue;
     const deg = index.degree.get(t.id) ?? 0;
-    if (f.orphansOnly && deg > 0) continue;
+    // Views never own foreign keys, so they would always look orphaned.
+    if (f.orphansOnly && (deg > 0 || isViewKind(t.kind))) continue;
     if (f.hubsOnly && deg < hub) continue;
     result.add(t.id);
   }

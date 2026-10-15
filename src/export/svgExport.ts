@@ -7,7 +7,7 @@
  */
 import type { DatabaseModel, TableModel } from '../domain/model';
 import type { LayoutNode, LayoutResult } from '../layout/types';
-import { CARD, truncate } from '../layout/sizing';
+import { CARD, truncate, VIEW_BADGE, viewBadgeLabel, viewBadgeWidth } from '../layout/sizing';
 import { boundsOf, edgePathD, endMarkers, resolveEdge } from '../render/edgeGeometry';
 import { FONT_MONO, FONT_UI, schemaColors, type ThemeTokens } from '../render/theme';
 import { schemaHue } from '../view/graphQueries';
@@ -134,11 +134,21 @@ export function exportSvg(input: SvgExportInput): { svg: string; width: number; 
 function card(n: LayoutNode, p: { x: number; y: number }, table: TableModel, t: ThemeTokens, schemaColor: string): string {
   const o: string[] = [];
   o.push(`<g transform="translate(${r1(p.x)},${r1(p.y)})">`);
-  o.push(`<rect width="${n.width}" height="${n.height}" rx="6" fill="${t.card}" stroke="${table.kind === 'external' ? t.inkFaint : t.cardBorder}"${table.kind === 'external' ? ' stroke-dasharray="4 3"' : ''}/>`);
-  o.push(`<path d="M0.5,6 a5.5,5.5 0 0 1 5.5,-5.5 h${n.width - 12} a5.5,5.5 0 0 1 5.5,5.5 v${CARD.headerHeight - 6} h${-(n.width - 1)} z" fill="${t.cardHeader}"/>`);
+  const badge = viewBadgeLabel(table.kind);
+  const stroke = table.kind === 'external' ? ` stroke="${t.inkFaint}" stroke-dasharray="4 3"` : badge ? ` stroke="${t.view}" stroke-width="1.5"${table.kind === 'view' ? ' stroke-dasharray="5 3"' : ''}` : ` stroke="${t.cardBorder}"`;
+  o.push(`<rect width="${n.width}" height="${n.height}" rx="6" fill="${t.card}"${stroke}/>`);
+  o.push(`<path d="M0.5,6 a5.5,5.5 0 0 1 5.5,-5.5 h${n.width - 12} a5.5,5.5 0 0 1 5.5,5.5 v${CARD.headerHeight - 6} h${-(n.width - 1)} z" fill="${badge ? t.viewHeader : t.cardHeader}"/>`);
   o.push(`<rect x="0" y="0" width="3" height="${CARD.headerHeight}" rx="1.5" fill="${schemaColor}"/>`);
   o.push(`<line x1="0" x2="${n.width}" y1="${CARD.headerHeight}" y2="${CARD.headerHeight}" stroke="${t.cardBorder}"/>`);
-  o.push(`<text class="t" x="${CARD.paddingX + 2}" y="${CARD.headerHeight / 2 + 4.5}" fill="${t.ink}">${esc(truncate(table.name, CARD.maxTitleChars))}</text>`);
+  o.push(`<text class="t" x="${CARD.paddingX + 2}" y="${CARD.headerHeight / 2 + 4.5}" fill="${badge ? t.view : t.ink}"${badge ? ' font-style="italic"' : ''}>${esc(truncate(table.name, CARD.maxTitleChars))}</text>`);
+  if (badge) {
+    const bw = viewBadgeWidth(badge);
+    const bx = n.width - CARD.paddingX - bw;
+    const by = (CARD.headerHeight - VIEW_BADGE.height) / 2;
+    const solid = table.kind === 'materialized-view';
+    o.push(`<rect x="${r1(bx)}" y="${by}" width="${bw}" height="${VIEW_BADGE.height}" rx="${VIEW_BADGE.height / 2}" fill="${solid ? t.view : 'none'}" stroke="${t.view}"/>`);
+    o.push(`<text class="m" x="${r1(bx + VIEW_BADGE.paddingX)}" y="${by + 11.5}" font-size="${VIEW_BADGE.fontSize}" font-weight="700" fill="${solid ? t.card : t.view}">${badge}</text>`);
+  }
   const byName = new Map(table.columns.map((c) => [c.name, c]));
   const cc = n.cardColumns;
   const xName = CARD.paddingX + CARD.iconWidth;
