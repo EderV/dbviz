@@ -158,6 +158,20 @@ code { font-family: var(--font-mono); font-size: 11.5px; }
   transition: opacity .15s, box-shadow .15s, border-color .15s;
 }
 .card.external { outline: 1px dashed var(--ink-faint); outline-offset: -1px; --ring: transparent; background: color-mix(in srgb, var(--card) 70%, transparent); }
+/* Views: teal, italic title, VIEW pill. Plain views are virtual (dashed edge); materialized ones store rows (solid edge). */
+.card.view { outline: 1.5px dashed var(--view); outline-offset: -1.5px; --ring: transparent; }
+.card.matview { --ring: var(--view); box-shadow: 0 0 0 1.5px var(--ring), 0 2px 6px rgb(0 0 0 / .06); }
+.card.view .card-head, .card.matview .card-head { background: var(--view-header); }
+.card.view .card-title, .card.matview .card-title { font-style: italic; color: var(--view); }
+.card-badge {
+  flex: none; height: 16px; line-height: 16px; padding: 0 5px; border-radius: 8px; font-size: 9.5px; font-weight: 700; letter-spacing: 0;
+  color: var(--card); background: var(--view);
+}
+.card.view .card-badge { color: var(--view); background: transparent; box-shadow: inset 0 0 0 1px var(--view); }
+.card.view .card-ghost, .card.matview .card-ghost {
+  background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--view) 12%, transparent) 0 6px, transparent 6px 12px) !important;
+}
+.card.view .ghost-name, .card.matview .ghost-name { font-style: italic; color: var(--view); }
 .card-head {
   display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px; background: var(--card-header);
   box-shadow: inset 0 -1px 0 var(--card-border); position: relative;
@@ -235,6 +249,11 @@ code { font-family: var(--font-mono); font-size: 11.5px; }
 .insp-name { font-family: var(--font-mono); font-weight: 600; font-size: 15px; word-break: break-all; }
 .insp-actions { display: flex; gap: 5px; padding: 0 12px 8px; flex-wrap: wrap; }
 .insp-note { margin: 0 12px 6px; color: var(--warn); font-size: 12px; }
+.insp-note.view, .insp-note.materialized-view { color: var(--view); }
+.insp-def {
+  margin: 2px 12px 8px; padding: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); background: var(--card); border: 1px solid var(--panel-border); border-radius: 4px;
+}
 .insp-comment { margin: 0 12px 8px; color: var(--ink-muted); font-style: italic; }
 .insp-section { padding: 10px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-muted); font-weight: 600; border-top: 1px solid var(--panel-border); }
 .insp-cols { width: 100%; border-collapse: collapse; }

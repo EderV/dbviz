@@ -1,7 +1,7 @@
 import { useStore, type NodeProps, type Node } from '@xyflow/react';
 import { memo } from 'react';
 import type { DatabaseModel, TableModel } from '../../domain/model';
-import { CARD, truncate } from '../../layout/sizing';
+import { CARD, truncate, viewBadgeLabel } from '../../layout/sizing';
 import type { LayoutNode } from '../../layout/types';
 import { schemaHue } from '../../view/graphQueries';
 import { useApp } from '../state/store';
@@ -42,10 +42,12 @@ function TableNodeImpl({ id, data }: NodeProps<TableFlowNode>) {
   // Mirrors measureCard(): [pad+icon][name][gap+type][gap+default][flag+pad].
   const cols = `${CARD.paddingX + CARD.iconWidth}px ${cc.name}px ${CARD.gap + cc.type}px${cc.default ? ` ${CARD.gap + cc.default}px` : ''} 1fr`;
   const byName = new Map(table.columns.map((c) => [c.name, c]));
+  const badge = viewBadgeLabel(table.kind);
+  const kindClass = table.kind === 'external' ? ' external' : table.kind === 'view' ? ' view' : table.kind === 'materialized-view' ? ' matview' : '';
 
   return (
     <div
-      className={`card mode-${mode || 'none'} lod-${lod}${table.kind === 'external' ? ' external' : ''}`}
+      className={`card mode-${mode || 'none'} lod-${lod}${kindClass}`}
       style={{ width: n.width, height: n.height, ['--schema-hue' as string]: hue }}
       onMouseEnter={() => hover(id)}
       onMouseLeave={() => hover(null)}
@@ -54,6 +56,11 @@ function TableNodeImpl({ id, data }: NodeProps<TableFlowNode>) {
         <span className="card-title" title={table.id}>
           {truncate(table.name, CARD.maxTitleChars)}
         </span>
+        {badge && (
+          <span className="card-badge" title={table.kind === 'view' ? 'View' : 'Materialized view'}>
+            {badge}
+          </span>
+        )}
         {locked && (
           <span className="card-lock" title="Position locked">
             ⌖
@@ -99,7 +106,12 @@ function TableNodeImpl({ id, data }: NodeProps<TableFlowNode>) {
           <span className="ghost-name" style={{ fontSize: lod === 2 ? 30 : 18 }}>
             {table.name}
           </span>
-          {lod === 1 && <span className="ghost-meta">{table.columns.length} cols</span>}
+          {lod === 1 && (
+            <span className="ghost-meta">
+              {badge ? `${badge.toLowerCase()} · ` : ''}
+              {table.columns.length} cols
+            </span>
+          )}
         </div>
       )}
     </div>

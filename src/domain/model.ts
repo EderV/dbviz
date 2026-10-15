@@ -63,8 +63,16 @@ export interface CheckConstraintModel {
   expression: string;
 }
 
-/** `external` = referenced by a foreign key but never declared in the input. */
-export type TableKind = 'table' | 'partitioned' | 'external';
+/**
+ * `external` = referenced by a foreign key but never declared in the input.
+ * `view` / `materialized-view` = declared by CREATE [MATERIALIZED] VIEW; they
+ * have columns but never own keys or foreign keys.
+ */
+export type TableKind = 'table' | 'partitioned' | 'external' | 'view' | 'materialized-view';
+
+export function isViewKind(kind: TableKind): boolean {
+  return kind === 'view' || kind === 'materialized-view';
+}
 
 export interface TableModel {
   id: TableId;
@@ -78,6 +86,8 @@ export interface TableModel {
   checks: CheckConstraintModel[];
   indexes: IndexModel[];
   comment?: string;
+  /** For views: the SELECT text exactly as written. */
+  definition?: string;
   source?: SourceRef;
 }
 
@@ -137,6 +147,7 @@ export function tableId(schema: string, name: string): TableId {
 export interface ModelStats {
   schemas: number;
   tables: number;
+  views: number;
   relationships: number;
   indexes: number;
   enums: number;
@@ -147,15 +158,18 @@ export function modelStats(model: DatabaseModel): ModelStats {
   let indexes = 0;
   let columns = 0;
   let tables = 0;
+  let views = 0;
   for (const t of model.tables) {
     if (t.kind === 'external') continue;
-    tables++;
+    if (isViewKind(t.kind)) views++;
+    else tables++;
     indexes += t.indexes.length;
     columns += t.columns.length;
   }
   return {
     schemas: model.schemas.length,
     tables,
+    views,
     relationships: model.relationships.length,
     indexes,
     enums: model.enums.length,

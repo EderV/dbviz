@@ -45,6 +45,7 @@ interface TableDraft {
   checks: CheckConstraintModel[];
   indexes: IndexModel[];
   comment?: string;
+  definition?: string;
   source?: SourceRef;
   order: number;
 }
@@ -83,7 +84,7 @@ const FK_ACTIONS: Record<string, ReferentialAction> = {
 
 /** Statement kinds we parse successfully but that never affect the diagram. */
 const KNOWN_IRRELEVANT = new Set([
-  'CreateFunctionStmt', 'GrantStmt', 'GrantRoleStmt', 'ViewStmt', 'CreateTrigStmt', 'CreateSeqStmt', 'AlterSeqStmt',
+  'CreateFunctionStmt', 'GrantStmt', 'GrantRoleStmt', 'CreateTrigStmt', 'CreateSeqStmt', 'AlterSeqStmt',
   'AlterOwnerStmt', 'TransactionStmt', 'CreateRoleStmt', 'AlterRoleStmt', 'CopyStmt', 'InsertStmt', 'UpdateStmt',
   'DeleteStmt', 'DoStmt', 'CreatePolicyStmt', 'AlterDefaultPrivilegesStmt', 'CreateTableAsStmt', 'RuleStmt',
   'DropStmt', 'CreateDomainStmt', 'CompositeTypeStmt', 'AlterFunctionStmt', 'AlterEnumStmt', 'CreateCastStmt',
@@ -116,6 +117,11 @@ export class ModelBuilder {
         return this.createTable(ctx, node);
       case 'AlterTableStmt':
         return this.alterTable(ctx, node);
+      case 'ViewStmt':
+        return this.createView(ctx, node.view, node.query, stringList(node.aliases), 'view', !!node.replace);
+      case 'CreateTableAsStmt':
+        if (node.objtype !== 'OBJECT_MATVIEW') return 'ignored';
+        return this.createView(ctx, node.into?.rel, node.query, stringList(node.into?.colNames), 'materialized-view', !!node.if_not_exists);
       case 'IndexStmt':
         return this.createIndex(ctx, node);
       case 'CreateEnumStmt':
@@ -277,6 +283,101 @@ export class ModelBuilder {
       else if (elt.Constraint) this.addTableConstraint(ctx, table, elt.Constraint);
     }
     return 'used';
+  }
+
+  // -------------------------------------------------------------------------
+  // CREATE [MATERIALIZED] VIEW
+  // -------------------------------------------------------------------------
+
+  /**
+   * Views are drawn as cards too. Their columns come from the SELECT list;
+   * a plain column reference borrows the type of the column it reads, so
+   * views over tables declared earlier in the script get real types.
+   */
+  private createView(ctx: StatementContext, rv: any, query: any, aliases: string[], kind: 'view' | 'materialized-view', keepExisting: boolean): ApplyOutcome {
+    if (!rv?.relname) return 'ignored';
+    if (rv.relpersistence === 't') return 'ignored'; // temporary views
+    const schema = this.schemaForCreate(rv);
+    const id = tableId(schema, rv.relname);
+    const source = this.ref(ctx, rv.location);
+    const existing = this.tables.get(id);
+    if (existing) {
+      if (keepExisting && kind === 'materialized-view') return 'used'; // IF NOT EXISTS
+      // CREATE OR REPLACE VIEW silently replaces; anything else is a real redefinition.
+      if (!(keepExisting && existing.kind === kind)) this.warn(source, `${id} is defined more than once; the later definition wins.`);
+      this.tables.delete(id);
+    }
+    const view = this.newTable(schema, rv.relname, kind, source);
+    view.definition = viewDefinition(ctx.stmt.text, ctx.mapper.toChar(rv.location));
+
+    const columns = this.viewColumns(query);
+    aliases.forEach((alias, i) => {
+      if (columns[i]) columns[i].name = alias;
+    });
+    for (const c of columns) view.columns.set(c.name, c);
+    return 'used';
+  }
+
+  private viewColumns(query: any): ColumnDraft[] {
+    let sel = query?.SelectStmt ?? query;
+    // UNION / INTERSECT / EXCEPT: column names come from the leftmost branch.
+    while (sel && sel.op && sel.op !== 'SETOP_NONE' && sel.larg) sel = sel.larg.SelectStmt ?? sel.larg;
+    if (!sel) return [];
+    if (Array.isArray(sel.valuesLists) && sel.valuesLists.length > 0) {
+      const first = sel.valuesLists[0]?.List?.items ?? [];
+      return first.map((_: unknown, i: number) => viewColumn(`column${i + 1}`, ''));
+    }
+
+    // Relations in FROM, keyed by alias (or name), in declaration order.
+    const from = new Map<string, TableDraft>();
+    const collect = (n: any) => {
+      if (!n) return;
+      if (n.RangeVar) {
+        const t = this.resolveExisting(n.RangeVar);
+        if (t) from.set(n.RangeVar.alias?.aliasname ?? n.RangeVar.relname, t);
+      } else if (n.JoinExpr) {
+        collect(n.JoinExpr.larg);
+        collect(n.JoinExpr.rarg);
+      }
+    };
+    for (const n of sel.fromClause ?? []) collect(n);
+
+    const out: ColumnDraft[] = [];
+    for (const item of sel.targetList ?? []) {
+      const rt = item.ResTarget;
+      if (!rt) continue;
+      const val = rt.val ?? {};
+      if (val.ColumnRef) {
+        const fields: any[] = val.ColumnRef.fields ?? [];
+        const qualifier: string | undefined = fields.length > 1 ? fields[fields.length - 2]?.String?.sval : undefined;
+        const last = fields[fields.length - 1];
+        const tables = qualifier ? [from.get(qualifier)].filter((t): t is TableDraft => !!t) : [...from.values()];
+        if (last?.A_Star) {
+          const expanded = tables.flatMap((t) => [...t.columns.values()].map((c) => viewColumn(c.name, c.type, c, t)));
+          out.push(...(expanded.length > 0 ? expanded : [viewColumn('*', '')]));
+          continue;
+        }
+        const colName: string = last?.String?.sval ?? '?column?';
+        const owners = tables.filter((t) => t.columns.has(colName));
+        const owner = owners.length === 1 ? owners[0] : undefined;
+        const src = owner?.columns.get(colName);
+        out.push(viewColumn(rt.name ?? colName, src?.type ?? '', src, owner));
+        continue;
+      }
+      const cast = val.TypeCast;
+      const fn = val.FuncCall ?? cast?.arg?.FuncCall;
+      const inner = cast?.arg?.ColumnRef?.fields;
+      const derived = inner ? inner[inner.length - 1]?.String?.sval : fn ? stringList(fn.funcname).pop() : cast ? formatTypeName(cast.typeName).baseName : undefined;
+      const type = cast ? formatTypeName(cast.typeName) : undefined;
+      const column = viewColumn(rt.name ?? derived ?? '?column?', type?.display ?? '');
+      if (type) {
+        column.typeBase = type.baseName;
+        column.typeSchema = type.schema;
+        column.isArray = type.isArray;
+      }
+      out.push(column);
+    }
+    return out;
   }
 
   private addColumn(ctx: StatementContext, table: TableDraft, def: any) {
@@ -511,7 +612,7 @@ export class ModelBuilder {
   }
 
   private comment(node: any): ApplyOutcome {
-    const kind = node.objtype === 'OBJECT_TABLE' ? 'table' : node.objtype === 'OBJECT_COLUMN' ? 'column' : undefined;
+    const kind = TABLE_LIKE_OBJECTS.has(node.objtype) ? 'table' : node.objtype === 'OBJECT_COLUMN' ? 'column' : undefined;
     if (!kind) return 'ignored';
     const target = stringList(node.object?.List?.items);
     this.pendingComments.push({ target, kind, comment: node.comment, searchPath: this.effectiveSearchPath() });
@@ -553,6 +654,7 @@ export class ModelBuilder {
         checks: t.checks,
         indexes: withConstraintIndexes(t),
         comment: t.comment,
+        definition: t.definition,
         source: t.source,
       }));
 
@@ -685,6 +787,38 @@ const RELEVANT_ALTER = new Set([
   'AT_AddConstraint', 'AT_AddColumn', 'AT_DropColumn', 'AT_ColumnDefault', 'AT_SetNotNull', 'AT_DropNotNull',
   'AT_AlterColumnType', 'AT_AddIdentity', 'AT_DropIdentity', 'AT_DropConstraint',
 ]);
+
+const TABLE_LIKE_OBJECTS = new Set(['OBJECT_TABLE', 'OBJECT_VIEW', 'OBJECT_MATVIEW', 'OBJECT_FOREIGN_TABLE']);
+
+function viewColumn(name: string, type: string, from?: ColumnDraft, owner?: TableDraft): ColumnDraft {
+  // Primary-key columns are only marked NOT NULL in finish(), so check the key directly.
+  const notNull = !!from && (!from.nullable || !!owner?.primaryKey.includes(from.name));
+  return {
+    name,
+    type,
+    typeSchema: from?.typeSchema,
+    typeBase: from?.typeBase ?? type,
+    nullable: !notNull,
+    isPrimaryKey: false,
+    isForeignKey: false,
+    isUnique: false,
+    isArray: from?.isArray ?? false,
+  };
+}
+
+/** The SELECT text of a view, without the trailing `WITH ... CHECK OPTION` / `WITH [NO] DATA`. */
+function viewDefinition(text: string, from: number): string | undefined {
+  const rest = text.slice(from);
+  const m = /\bAS\s+(?=\(?\s*(?:SELECT|WITH|VALUES|TABLE)\b)/i.exec(rest);
+  if (!m) return undefined;
+  const body = rest
+    .slice(m.index + m[0].length)
+    .replace(/;\s*$/, '')
+    .replace(/\s+WITH\s+(?:(?:CASCADED|LOCAL)\s+)?CHECK\s+OPTION\s*$/i, '')
+    .replace(/\s+WITH\s+(?:NO\s+)?DATA\s*$/i, '')
+    .trim();
+  return body.length > 0 ? body : undefined;
+}
 
 function parseSearchPath(value: string): string[] {
   return value
